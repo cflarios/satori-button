@@ -1,9 +1,12 @@
 /*
  * M5Stack Atom Lite - el boton como trigger remoto via MQTT
  * ---------------------------------------------------------------------------
- *  Click             -> publica {"action":"click"}   en <base>/<dev>/event
+ *  Click             -> publica {"action":"click"}   en TRIGGER_TOPIC
  *  Doble click       -> publica {"action":"double"}
  *  Pulsacion larga   -> publica {"action":"long"}    (dispara al llegar al umbral)
+ *
+ *  Con TRIGGER_TOPIC = "satori/capture", el click hace que Satori capture de la
+ *  camara y resuelva; Satori confirma en "reply_to" cuando termina.
  *
  *  El LED RGB es toda la interfaz que tiene este cacharro:
  *    rojo respirando    -> sin WiFi
@@ -23,6 +26,10 @@
 
 #include "config.h"
 
+#ifndef TRIGGER_TOPIC          // config.h anterior a TRIGGER_TOPIC
+#define TRIGGER_TOPIC ""       // -> <base>/<dev>/event, como antes
+#endif
+
 #if MQTT_USE_TLS
 #include <WiFiClientSecure.h>
 static WiFiClientSecure netClient;
@@ -36,7 +43,8 @@ static Adafruit_NeoPixel led(1, ATOM_LED_PIN, NEO_GRB + NEO_KHZ800);
 // ---------------------------------------------------------------------------
 // Topics e identidad (se construyen en setup a partir de config.h + MAC)
 // ---------------------------------------------------------------------------
-static char topicEvent[128];
+static char topicTrigger[128];   // gestos del boton (TRIGGER_TOPIC)
+static char topicEvent[128];     // otros eventos del Atom (pong)
 static char topicAck[128];
 static char topicCmd[128];
 static char topicStatus[128];
@@ -128,12 +136,13 @@ static void fireEvent(const char* action, uint32_t heldMs) {
   doc["held_ms"]  = heldMs;
   doc["uptime_s"] = millis() / 1000;
   doc["rssi"]     = WiFi.RSSI();
+  doc["reply_to"] = topicAck;    // el consumidor confirma aqui (Satori lo usa)
 
   char buf[224];
   size_t n = serializeJson(doc, buf, sizeof(buf));
 
   bool ok = mqtt.connected() &&
-            mqtt.publish(topicEvent, (const uint8_t*)buf, n, false);
+            mqtt.publish(topicTrigger, (const uint8_t*)buf, n, false);
 
   Serial.printf("[EVT] %-6s seq=%lu held=%lums -> %s\n",
                 action, (unsigned long)seq, (unsigned long)heldMs,
@@ -338,6 +347,8 @@ void setup() {
            DEVICE_ID, mac[3], mac[4], mac[5]);
 
   snprintf(topicEvent,  sizeof(topicEvent),  "%s/%s/event",  MQTT_BASE, DEVICE_ID);
+  snprintf(topicTrigger, sizeof(topicTrigger), "%s",
+           strlen(TRIGGER_TOPIC) ? TRIGGER_TOPIC : topicEvent);
   snprintf(topicAck,    sizeof(topicAck),    "%s/%s/ack",    MQTT_BASE, DEVICE_ID);
   snprintf(topicCmd,    sizeof(topicCmd),    "%s/%s/cmd",    MQTT_BASE, DEVICE_ID);
   snprintf(topicStatus, sizeof(topicStatus), "%s/%s/status", MQTT_BASE, DEVICE_ID);
@@ -347,6 +358,8 @@ void setup() {
   Serial.println();
   Serial.println("=== M5Atom Lite :: trigger MQTT ===");
   Serial.printf("client  : %s\n", clientId);
+  Serial.printf("broker  : %s:%d\n", MQTT_HOST, (int)MQTT_PORT);
+  Serial.printf("trigger : %s\n", topicTrigger);
   Serial.printf("event   : %s\n", topicEvent);
   Serial.printf("ack     : %s\n", topicAck);
   Serial.printf("cmd     : %s\n", topicCmd);
