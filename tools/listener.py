@@ -22,7 +22,7 @@ from pathlib import Path
 
 import paho.mqtt.client as mqtt
 
-CONFIG_NAMES = ("MQTT_HOST", "MQTT_PORT", "MQTT_BASE", "DEVICE_ID")
+CONFIG_NAMES = ("MQTT_HOST", "MQTT_PORT", "MQTT_BASE", "DEVICE_ID", "TRIGGER_TOPIC")
 
 
 def read_config() -> tuple[dict, str]:
@@ -96,6 +96,9 @@ def main() -> int:
               "config.h y ponle un sufijo aleatorio tuyo")
 
     t_event = f"{args.base}/{args.dev}/event"
+    # Los gestos van a TRIGGER_TOPIC si esta definido (p.ej. satori/capture).
+    # No lo ejecutes a la vez que Satori: los dos confirmarian el mismo evento.
+    t_trigger = cfg.get("TRIGGER_TOPIC") or t_event
     t_ack = f"{args.base}/{args.dev}/ack"
     t_cmd = f"{args.base}/{args.dev}/cmd"
     t_status = f"{args.base}/{args.dev}/status"
@@ -110,8 +113,10 @@ def main() -> int:
             print(f"!! conexion rechazada: {rc}")
             return
         print(f"== conectado a {args.host}:{args.port}")
-        client.subscribe([(t_event, 1), (t_status, 1)])
-        print(f"   sub {t_event}")
+        client.subscribe(list({(t_trigger, 1), (t_event, 1), (t_status, 1)}))
+        print(f"   sub {t_trigger}")
+        if t_trigger != t_event:
+            print(f"   sub {t_event}")
         print(f"   sub {t_status}")
         print(f"   modo {'EJECUCION' if args.allow_exec else 'dry-run (usa --exec)'}\n")
 
@@ -136,8 +141,8 @@ def main() -> int:
         print(f"          -> {'OK ' if ok else 'ERR'} {detail}")
 
         if seq is not None:
-            client.publish(t_ack, json.dumps({"seq": seq, "ok": ok, "detail": detail[:80]}),
-                           qos=1)
+            client.publish(data.get("reply_to") or t_ack,
+                           json.dumps({"seq": seq, "ok": ok, "detail": detail[:80]}), qos=1)
 
     cli.on_connect = on_connect
     cli.on_message = on_message
